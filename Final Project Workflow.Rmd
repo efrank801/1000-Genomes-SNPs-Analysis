@@ -1,0 +1,391 @@
+---
+title: 'Final Project Workflow'
+author: "Ethan Frank"
+date: "2022-12-14"
+output:
+  html_document: default
+  word_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Preliminaries
+
+Load the vcfR package and other packages with `library()`.
+```{r}
+library(vcfR)    
+library(vegan)
+library(ggplot2)
+library(ggpubr)
+```
+
+Make sure that your working directory is set to the location of the file.
+```{r}
+setwd("/Users/ethanfrank/Desktop/R/Final Project")
+getwd()
+list.files()
+list.files(pattern = "vcf")
+```
+
+## Extract Data from .vcf 
+
+Reads metadata and data from .vcf file and argument to convert "." in data to NA. Creates R object out of .vcf data.
+
+```{r}
+vcf <- vcfR::read.vcfR("17.20809577-21049577.ALL.chr17_GRCh38.genotypes.20170504.vcf.gz", convertNA = TRUE)
+```
+
+## Extract Genotype Scores
+
+Extracts genotype data from R object and converts to numeric values. Stores numeric values into another R object.
+
+```{r}
+vcf_num <- vcfR::extract.gt(vcf, 
+           element = "GT",
+           IDtoRowNames  = F,
+           as.numeric = T,
+           convertNA = T)
+```
+
+## Save New Data
+
+Save the new data to .csv
+
+```{r}
+write.csv(vcf_num, file="vcf_num.csv", row.names = F)
+list.files(pattern = "vcf")
+```
+
+## Transpose Data
+
+Flips rows and columns of data and stores into R object.
+
+```{r}
+vcf_num_t <- t(vcf_num) 
+```
+
+Converts R object data into data frame.
+
+```{r}
+vcf_num_df <- data.frame(vcf_num_t) 
+```
+
+Store row names into object.
+
+```{r}
+sample <- row.names(vcf_num_df)
+```
+
+Rewrite data frame with row names.
+
+```{r}
+vcf_num_df <- data.frame(sample, vcf_num_df)
+```
+
+Save vcf_num_df into .csv file.
+
+```{r}
+write.csv(vcf_num_df, file = "vcf_num_df.csv", row.names = F)
+list.files(pattern = "csv")
+```
+
+## Clean Data
+
+Read .csv file from 1000genomes.
+
+```{r}
+pop_meta <- read.csv(file = "1000genomes_people_info2-1.csv")
+```
+
+List names of pop_meta.
+
+```{r}
+names(pop_meta)
+```
+
+List names of columns 1-10 of vcf_num_df.
+
+```{r}
+names(vcf_num_df[1:10])
+```
+
+Merge pop_meta and vcf_num_df by "sample" and store in vcf_num_df2.
+
+```{r}
+vcf_num_df2 <- merge(pop_meta, vcf_num_df, by = "sample")
+```
+
+Check if row lengths are equal.
+
+```{r}
+nrow(vcf_num_df) == nrow(vcf_num_df2)
+```
+
+List names of columns 1-15 of vcf_num_df2.
+
+```{r}
+names(vcf_num_df2[1:15])
+```
+
+Save the new data to .csv
+
+```{r}
+write.csv(vcf_num_df2, file="vcf_num_df2.csv", row.names = F)
+list.files(pattern = "csv")
+```
+
+## Omit Invariant Features
+
+Create invar_omit function which takes a data frame object argument. Calculates standard deviation of each column. Stores each column which sd is 0 into i_var0 object. Removes columns which sd is 0. Returns manipulated data frame.
+
+```{r}
+invar_omit <- function(x) {
+  cat("Dataframe of dim", dim(x), "processed...\n")
+  sds <- apply(x, 2, sd, na.rm = TRUE)
+  i_var0 <- which(sds == 0)
+  cat(length(i_var0), "columns removed\n")
+  if (length(i_var0) > 0) {
+     x <- x[, -i_var0]
+  }
+  return(x)                      
+} 
+```
+
+Run invar_omit function on vcf_num_df2 and store into vcf_noinvar.
+
+```{r}
+vcf_noinvar <- vcf_num_df2
+vcf_noinvar <- vcf_noinvar[, -c(1:6)]
+vcf_noinvar <- invar_omit(vcf_noinvar)
+```
+
+Rewrite data frame object with first 6 columns from vcf_num_df2.
+
+```{r}
+vcf_noinvar <- data.frame(vcf_num_df2[, c(1:6)], vcf_noinvar)
+```
+
+Store number of invariant columns in object.
+
+```{r}
+N_of_invar_cols <- 2041
+```
+
+## Remove NAs
+
+Creates a function with a data frame object as an argument that returns the number of NAs present in the data frame object.
+
+```{r}
+find_NAs <- function(x) {
+  NAs_TF <- is.na(x)
+  i_NA <- which(NAs_TF == TRUE)
+  N_NA <- length(i_NA)
+  cat("Results:", N_NA, "NAs present\n.")
+  return(i_NA)
+}
+```
+
+Creates multiple objects. N_rows is the number of rows in vcf_noinvar. N_NA is a vector to hold the number of NAs. N_SNPs is the number of columns in vcf_noinvar.
+
+```{r}
+N_rows <- nrow(vcf_noinvar)
+N_NA   <- rep(x = 0, times = N_rows)
+N_SNPs <- ncol(vcf_noinvar)
+```
+
+For loop loops through each row and finds location of NAs and stores them into i_NA. Finds the number of NAs and stores them in N_NA_i. Save output to our original vector N_NA.
+
+```{r}
+# for (i in 1:N_rows) {
+#  i_NA <- find_NAs(vcf_noinvar[i,])
+#  N_NA_i <- length(i_NA)
+#  N_NA[i] <- N_NA_i
+# }
+```
+
+0 NAs were found so code was commented out for performance.
+
+Cut the number of columns in half and store them in cutoff50. Stores percentage of NAs in percent_NA. Finds which NAs are above 50% threshhold.
+
+```{r}
+# cutoff50 <- N_SNPs*0.5
+# percent_NA <- N_NA/N_SNPs*100
+# any(percent_NA > 50)
+# mean(percent_NA)
+# n_meanNA_rows <- mean(percent_NA)
+```
+
+0 NAs were found so code was commented out for performance.
+
+## Mean Imputation
+
+Create mean imputation function which takes a data frame object argument and replaces NAs with mean value from column. 
+
+```{r}
+mean_imputation <- function(x) {
+  cat("This may take some time...")
+  n_cols <- ncol(x)
+  for (i in 1:n_cols) {
+    column_i <- x[, i]
+    mean_i <- mean(column_i, na.rm = TRUE)
+    NAs_i <- which(is.na(column_i))
+    N_NAs <- length(NAs_i)
+    column_i[NAs_i] <- mean_i
+    x[, i] <- column_i
+  }
+  return(x)
+}
+```
+
+Run mean_imputation() on vcf_noinvar.
+
+```{r}
+vcf_noNA <- vcf_noinvar
+vcf_noNA[, -c(1:6)] <- mean_imputation(vcf_noinvar[, -c(1:6)])
+```
+
+## Scale Data for PCA
+
+Scale data to prepare for PCA
+
+```{r}
+vcf_noNA <- vcf_noinvar
+vcf_scaled <- vcf_noNA
+vcf_scaled[, -c(1:6)] <- scale(vcf_noNA[, -c(1:6)])
+```
+
+Save scaled data to .csv.
+
+```{r}
+write.csv(vcf_scaled, file = "vcf_scaled.csv", row.names = F)
+list.files(pattern = "csv")
+```
+
+## Run PCA
+
+Run prcomp() on scaled data and store in vcf_pca.
+
+```{r}
+vcf_pca <- prcomp(vcf_scaled[, -c(1:6)])
+```
+
+Run screeplot() on vcf_pca.
+
+```{r}
+screeplot(vcf_pca)
+```
+
+## PCA Variation
+
+Create PCA_Variation function to return % variation.
+
+```{r}
+PCA_variation <- function(pca_summary, PCs = 2) {
+  var_explained <- pca_summary$importance[2, 1:PCs]*100
+  var_explained <- round(var_explained, 3)
+  return(var_explained)
+}
+```
+
+```{r}
+vcf_pca_summary <- summary(vcf_pca)
+var_out <- PCA_variation(vcf_pca_summary, PCs=500)
+N_columns <- ncol(vcf_scaled)
+cut_off <- 1/N_columns*100
+i_cut_off <- which(var_out < cut_off)
+i_cut_off <- min(i_cut_off)
+```
+
+Plot PCA percent variation on screeplot.
+
+```{r}
+N_meanNA_rowsPCs <- i_cut_off
+var_PC123 <- var_out[c(1, 2, 3)]
+barplot(var_out, 
+        main = "Percent Variation",
+        ylab = "Percent Variation explained",
+        names.arg = 1:length(var_out))
+abline(h = cut_off, col = 4, lwd = 2)
+abline(v = i_cut_off)
+legend("topright", col = c(1, 4), lty = c(1, 1),
+       legend = c("Vertical line: cutoff", "Horizontal line: 1st value below cutoff"))
+```
+
+Plot cumulative variation of var_out.
+
+```{r}
+cumulative_variation <- cumsum(var_out)
+plot(cumulative_variation, type = "l")
+```
+
+## PCA Results
+
+Extract scores from vcf_pca and store into vcf_pca_scores. Create data frame from vcf_pca_scores.
+
+```{r}
+vcf_pca_scores <- vegan::scores(vcf_pca)
+vcf_pca_scores2 <- data.frame(super_pop = vcf_noNA$super_pop, vcf_pca_scores)
+```
+
+PC1 Variation
+
+```{r}
+var_PC123[1]
+```
+
+PC2 Variation
+
+```{r}
+var_PC123[2]
+```
+
+PC3 Variation
+
+```{r}
+var_PC123[3]
+```
+
+## Plot PCA Results on Scatterplot
+
+PC1 v PC2
+
+```{r}
+ggpubr::ggscatter(data = vcf_pca_scores2,
+                  x = "PC1",
+                  y = "PC2",
+                  color = "super_pop",
+                  shape = "super_pop",
+                  main = "PC1 v PC2 Scatterplot",
+                  xlab = "PC1 3.417% variation",
+                  ylab = "PC2 2.55% variation")
+```
+
+PC1 v PC3
+
+```{r}
+ggpubr::ggscatter(data = vcf_pca_scores2,
+                  x = "PC1",
+                  y = "PC3",
+                  color = "super_pop",
+                  shape = "super_pop",
+                  main = "PC1 v PC3 Scatterplot",
+                  xlab = "PC1 3.417% variation",
+                  ylab = "PC3 1.928% variation")
+```
+
+PC2 v PC3
+
+```{r}
+ggpubr::ggscatter(data = vcf_pca_scores2,
+                  x = "PC2",
+                  y = "PC3",
+                  color = "super_pop",
+                  shape = "super_pop",
+                  main = "PC2 v PC3 Scatterplot",
+                  xlab = "PC2 2.55% variation",
+                  ylab = "PC3 1.928% variation")
+```
